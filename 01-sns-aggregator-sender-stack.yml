@@ -1,0 +1,222 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: >-
+  SNS Message Aggregator Sender Stack - Primary Region Deployment 
+  This template will deploy the SQS Queue within the primary region, 
+  and generate Parameter Store and CloudFormation references for 
+  automation and stacks to use.
+
+Resources: 
+  IAMPolicyLambdaBasicExecutionRole:
+    Type: "AWS::IAM::ManagedPolicy"
+    Properties:
+      ManagedPolicyName: "IAMPolicy-AWSLambdaBasicExecutionRole"
+      PolicyDocument: 
+        Version: "2012-10-17"
+        Statement: 
+          - 
+            Sid: "CreateLogGroup"
+            Effect: "Allow"
+            Action: "logs:CreateLogGroup"
+            Resource: !Sub "arn:aws:logs:*:${AWS::AccountId}:*"
+          - 
+            Sid: "CreateLog"
+            Effect: "Allow"
+            Action: 
+              - "logs:CreateLogStream"
+              - "logs:PutLogEvents"
+            Resource: 
+              - !Sub "arn:aws:logs:*:${AWS::AccountId}:log-group:/aws/lambda/*:*"
+  IAMPolicyLambdaSQSPollerExecutionRole:
+    Type: "AWS::IAM::ManagedPolicy"
+    Properties:
+      ManagedPolicyName: "IAMPolicy-AWSLambdaSQSPollerExecutionRole"
+      PolicyDocument: 
+        Version: "2012-10-17"
+        Statement: 
+          - 
+            Sid: "SQSSubscriberAccess"
+            Effect: "Allow"
+            Action: 
+              - "sqs:DeleteMessage"
+              - "sqs:ReceiveMessage"
+              - "sqs:GetQueueAttributes"
+            Resource: "arn:aws:sqs:*"
+  IAMPolicySNSPublishTopic:
+    Type: "AWS::IAM::ManagedPolicy"
+    Properties:
+      ManagedPolicyName: "IAMPolicy-SNSPublishTopic"
+      PolicyDocument: 
+        Version: "2012-10-17"
+        Statement: 
+          - 
+            Sid: "SNSPublishTopic"
+            Effect: "Allow"
+            Action: "sns:Publish"
+            Resource: !Sub "arn:aws:sns:ca-central-1:${AWS::AccountId}:*"
+  IAMRoleLambdaMessageHandler:
+    Type: "AWS::IAM::Role"
+    DependsOn:
+      - IAMPolicyLambdaBasicExecutionRole
+      - IAMPolicyLambdaSQSPollerExecutionRole
+      - IAMPolicySNSPublishTopic
+    Properties:
+      RoleName: "Lambda-MessageHandler"
+      AssumeRolePolicyDocument: 
+        Version: "2012-10-17"
+        Statement: 
+          - 
+            Effect: "Allow"
+            Action: 
+              - "sts:AssumeRole"
+            Principal: 
+                Service: 
+                  - "lambda.amazonaws.com"
+      ManagedPolicyArns: 
+        - !Ref IAMPolicyLambdaBasicExecutionRole
+        - !Ref IAMPolicyLambdaSQSPollerExecutionRole
+        - !Ref IAMPolicySNSPublishTopic
+  LambdaFunctionMessageAggregator:
+    Type: 'AWS::Lambda::Function'
+    Properties:
+      Code: 
+        ZipFile: |
+          #!/usr/bin/python3
+          import json
+          import boto3
+          import os
+
+          def lambda_handler(event, context):
+              batch_processes=[]
+              for record in event['Records']:
+                  send_request(record["body"])
+                  
+
+          def send_request(body):
+              # Create an SNS client
+              sns = boto3.client('sns')
+
+              # Publish a simple message to the specified SNS topic 
+              response = sns.publish(
+                  TopicArn=os.environ['email_topic'],    
+                  Message=body,    
+              )
+
+              # Print out the response
+              print(response)
+      Handler: index.lambda_handler
+      Role: !GetAtt IAMRoleLambdaMessageHandler.Arn
+      Runtime: python3.7
+      Timeout: 30 #Updated to match SQS Value
+      FunctionName: 'MessageAggregator'
+      Environment:
+        Variables:
+          email_topic: !Ref SNSTopicMessageAggregator
+  LambdaEventMappingMessageAggregator:
+    Type: AWS::Lambda::EventSourceMapping
+    Properties:
+      BatchSize: 10
+      Enabled: true
+      EventSourceArn: !GetAtt SQSQueueMessageAggregator.Arn
+      FunctionName: !GetAtt LambdaFunctionMessageAggregator.Arn
+  SQSQueueMessageAggregator: 
+    Type: AWS::SQS::Queue
+    Properties: 
+      QueueName: "MessageAggregator"
+      VisibilityTimeout:  360
+      KmsMasterKeyId: # !ImportValue DefaultSQSCMKARN
+  SQSQueuePolicyMessageAggregator: 
+    Type: AWS::SQS::QueuePolicy
+    Properties: 
+      Queues: 
+        - !Ref SQSQueueMessageAggregator
+      PolicyDocument: 
+        Statement: 
+          - Action: 
+              - "SQS:SendMessage" 
+            Effect: "Allow"
+            Resource: !GetAtt SQSQueueMessageAggregator.Arn
+            Principal:  
+              Service:
+                - sns.amazonaws.com
+  SNSTopicMessageAggregator:
+    Type: 'AWS::SNS::Topic'
+    Properties:
+      TopicName: !Sub 'Notification-Account-${AWS::AccountId}'
+      Tags:
+      - Key: TopicDirection
+        Value: sender:outbound
+      KmsMasterKeyId: # !ImportValue DefaultSNSCMKARN 
+  SSMParameterSQSQueueMessageAggregator:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: '/default/sqsqueue-messageaggregator'
+      Type: String
+      Tier: Intelligent-Tiering
+      Value: !Ref SQSQueueMessageAggregator
+  SSMParameterSQSQueueMessageAggregatorArn:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: '/default/sqsqueue-messageaggregatorarn'
+      Type: String
+      Tier: Intelligent-Tiering
+      Value: !GetAtt 'SQSQueueMessageAggregator.Arn'
+  SSMParameterSQSQueueMessageAggregatorQueueName:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: '/default/sqsqueue-messageaggregatorqueuename'
+      Type: String
+      Tier: Intelligent-Tiering
+      Value: !GetAtt 'SQSQueueMessageAggregator.QueueName'
+  SSMParameterSNSTopicMessageAggregatorSenderName:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: '/default/snstopic-messageaggregator-sender-name'
+      Type: String
+      Tier: Intelligent-Tiering
+      Value: !GetAtt 'SNSTopicMessageAggregator.TopicName'
+  SSMParameterSNSTopicMessageAggregatorSenderArn:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: '/default/snstopic-messageaggregator-sender-arn'
+      Type: String
+      Tier: Intelligent-Tiering
+      Value: !Ref SNSTopicMessageAggregator
+  SSMParameterLambdaFunctionMessageAggregatorArn:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: '/default/lambdafunction-messageaggregatorarn'
+      Type: String
+      Tier: Intelligent-Tiering
+      Value: !GetAtt LambdaFunctionMessageAggregator.Arn
+
+Outputs:
+  IAMPolicyLambdaBasicExecutionRole:
+    Value: !Ref IAMPolicyLambdaBasicExecutionRole
+  IAMPolicyLambdaSQSPollerExecutionRole:
+    Value: !Ref IAMPolicyLambdaSQSPollerExecutionRole
+  IAMPolicySNSPublishTopic:
+    Value: !Ref IAMPolicySNSPublishTopic
+  IAMRoleLambdaMessageHandlerName:
+    Value: !Ref IAMRoleLambdaMessageHandler
+  SNSTopicMessageAggregatorSender:
+    Value: !Ref SNSTopicMessageAggregator
+    Export:
+      Name: 'SNSTopic-MessageAggregator-Sender'
+  SNSTopicMessageAggregatorNameSender:
+    Value: !GetAtt 'SNSTopicMessageAggregator.TopicName'
+    Export:
+      Name: 'SNSTopic-MessageAggregatorName-Sender'
+  LambdaFunctionMessageAggregatorArn:
+    Value: !GetAtt LambdaFunctionMessageAggregator.Arn
+  SQSQueueMessageAggregator:
+    Value: !Ref SQSQueueMessageAggregator
+    Export:
+      Name: 'SQSQueueMessageAggregator'
+  SQSQueueMessageAggregatorArn:
+    Value: !GetAtt SQSQueueMessageAggregator.Arn
+    Export:
+      Name: 'SQSQueue-MessageAggregatorArn'
+  SQSQueueMessageAggregatorQueueName:
+    Value: !GetAtt SQSQueueMessageAggregator.QueueName
+    Export:
+      Name: 'SQSQueue-MessageAggregator-QueueName'

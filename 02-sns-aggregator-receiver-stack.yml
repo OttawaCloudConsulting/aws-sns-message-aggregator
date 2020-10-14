@@ -1,0 +1,102 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: >-
+  SNS Message Aggregator Receiver Stack - Multi-Region Deployment 
+  This template will deploy the Receiver SNS Topics within the 
+  selected target OUs and/or Regions, and generate Parameter Store
+  and CloudFormation references for integration with automateed 
+  infrastructure deployment.
+
+Parameters: 
+  SQSARN:
+    Type: String
+
+Resources: 
+  StackSetMessageAgg:
+    Type: AWS::CloudFormation::StackSet
+    Properties: 
+      Capabilities: 
+        - CAPABILITY_NAMED_IAM
+      Description: Multi-Region StackSet to deploy the SQS Queue within select regions, and generate Parameter Store and CloudFormation references for automation and stacks to use.
+      OperationPreferences: 
+        FailureToleranceCount: 4
+        MaxConcurrentCount: 10
+      Parameters: 
+        - ParameterKey: SQSARN
+          ParameterValue: !Ref SQSARN
+      PermissionModel: 'SELF_MANAGED'
+      StackInstancesGroup: 
+        -
+          DeploymentTargets: # Deploy either Organization Units OR Individual Accounts
+            Accounts:
+              - !Sub '${AWS::AccountId}'
+            # OrganizationalUnitIds:
+            #   - ou-1a23-a1bcdefg # <- List of Organization Units or Root ID (https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-properties-cloudformation-stackset-deploymenttargets.html)
+            #   - ou-2b34-b2cdefgh #
+            #   - ou-3c45-c3defghi #
+          Regions: 
+            - ca-central-1
+            # - ap-east-1
+            # - ap-southeast-1
+            # - ap-southeast-2
+            # - eu-central-1
+            # - us-east-1
+            # - us-east-2
+            # - us-west-1
+            # - us-west-2
+            # - eu-north-1
+            # - ap-south-1
+            # - eu-west-3
+            # - eu-west-2
+            # - eu-west-1
+            # - ap-northeast-2
+            # - ap-northeast-1
+            # - sa-east-1
+      StackSetName: sns-aggregator-receiver-stack
+      TemplateBody: |
+        Description: >-
+          SNS Message Aggregator Sender Stack - Primary Region Deployment 
+          This template will deploy the SQS Queue within the primary region, 
+          and generate Parameter Store and CloudFormation references for 
+          automation and stacks to use.
+        Parameters: 
+          SQSARN:
+            Type: String
+        Resources: 
+          SNSTopicMessageAggregatorReceiver:
+            Type: 'AWS::SNS::Topic'
+            Properties:
+              TopicName: 'message-aggregator-receiver'
+              # KmsMasterKeyId: String
+              Tags:
+              - Key: TopicDirection
+                Value: receeiver:inbound
+          SNSSubscriptionMessageAggregatorReceiver:
+            Type: AWS::SNS::Subscription
+            Properties: 
+              Endpoint: !Ref SQSARN
+              Protocol: 'sqs'
+              RawMessageDelivery: true
+              TopicArn: !Ref SNSTopicMessageAggregatorReceiver
+          SSMParameterSNSTopicMessageAggregatorReceiverName:
+            Type: AWS::SSM::Parameter
+            Properties:
+              Name: '/default/snstopic-messageaggregator-receiver-name'
+              Type: String
+              Tier: Intelligent-Tiering
+              Value: !GetAtt 'SNSTopicMessageAggregatorReceiver.TopicName'
+          SSMParameterSNSTopicMessageAggregatorReceiverArn:
+            Type: AWS::SSM::Parameter
+            Properties:
+              Name: '/default/snstopic-messageaggregator-receiver-arn'
+              Type: String
+              Tier: Intelligent-Tiering
+              Value: !Ref SNSTopicMessageAggregatorReceiver
+        Outputs:
+          SNSTopicMessageAggregatorReceiver:
+            Value: !Ref SNSTopicMessageAggregatorReceiver
+            Export:
+              Name: 'SNSTopic-MessageAggregator-Receiver'
+          SNSTopicMessageAggregatorReceiverName:
+            Value: !GetAtt 'SNSTopicMessageAggregatorReceiver.TopicName'
+            Export:
+              Name: 'SNSTopic-MessageAggregatorName-Receiver'

@@ -1,0 +1,19 @@
+{
+    "Version": "2012-10-17",
+    "Statement": [{
+            "Effect": "Allow",
+            "Action": "logs:CreateLogGroup",
+            "Resource": "arn:aws:logs:*:491942823129:*"
+        },
+        {
+            "Effect": "Allow",
+            "Action": [
+                "logs:CreateLogStream",
+                "logs:PutLogEvents"
+            ],
+            "Resource": [
+                "arn:aws:logs:*:491942823129:log-group:/aws/lambda/my-sqspoller-lambda-checker:*"
+            ]
+        }
+    ]
+}

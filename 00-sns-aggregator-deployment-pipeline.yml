@@ -1,0 +1,332 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: >-
+  Deployment Pipeline for SNS Message Aggregator Solution
+# Metadata: 
+
+Parameters: 
+  SourceArtifactFile:
+    Description: 'S3 source artifact, include directory path'
+    Type: String
+    Default: MessageAggArtifact.zip
+  MasterRoot:
+    Description: 'Is Master Root Account?'
+    Type: String 
+    Default: 'No'
+    AllowedValues:
+      - 'Yes'
+      - 'No'
+
+Conditions: 
+  CreateStackSetRole: !Equals [!Ref MasterRoot, 'No']
+
+Resources: 
+  IAMServiceRoleCodePipelineCloudformation:
+    Type: AWS::IAM::Role
+    Properties:
+      Path: /
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+        - Action: sts:AssumeRole
+          Effect: Allow
+          Principal:
+            Service: cloudformation.amazonaws.com
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AdministratorAccess
+  IAMServiceRoleStackSetAdmin:
+    Condition: CreateStackSetRole
+    Type: AWS::IAM::Role
+    Properties:
+      Path: /
+      RoleName: 'AWSCloudFormationStackSetAdministrationRole'
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+        - Action: sts:AssumeRole
+          Effect: Allow
+          Principal:
+            Service: cloudformation.amazonaws.com
+      Policies:
+          - PolicyName: 'AssumeRole-AWSCloudFormationStackSetExecutionRole' 
+            PolicyDocument:
+              Statement: 
+                - Effect: 'Allow'
+                  Action: 'sts:AssumeRole'
+                  Resource: 'arn:aws:iam::*:role/AWSCloudFormationStackSetExecutionRole'
+  IAMPolicyCodePipelineServiceRoleMessageAgg:
+    Type: 'AWS::IAM::ManagedPolicy'
+    Properties:
+      Description: 'CodePipeline Service Role Policy for Message Aggregator'
+      Path: /
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Action:
+              - 'iam:PassRole'
+            Resource: '*'
+            Effect: Allow
+            Condition:
+              StringEqualsIfExists:
+                'iam:PassedToService':
+                  - cloudformation.amazonaws.com
+                  - elasticbeanstalk.amazonaws.com
+                  - ec2.amazonaws.com
+                  - ecs-tasks.amazonaws.com
+          - Action:
+              - 'codecommit:CancelUploadArchive'
+              - 'codecommit:GetBranch'
+              - 'codecommit:GetCommit'
+              - 'codecommit:GetUploadArchiveStatus'
+              - 'codecommit:UploadArchive'
+            Resource: '*'
+            Effect: Allow
+          - Action:
+              - 'codedeploy:CreateDeployment'
+              - 'codedeploy:GetApplication'
+              - 'codedeploy:GetApplicationRevision'
+              - 'codedeploy:GetDeployment'
+              - 'codedeploy:GetDeploymentConfig'
+              - 'codedeploy:RegisterApplicationRevision'
+            Resource: '*'
+            Effect: Allow
+          - Action:
+              - 'codestar-connections:UseConnection'
+            Resource: '*'
+            Effect: Allow
+          - Action:
+              - 'elasticbeanstalk:*'
+              - 'ec2:*'
+              - 'elasticloadbalancing:*'
+              - 'autoscaling:*'
+              - 'cloudwatch:*'
+              - 's3:*'
+              - 'sns:*'
+              - 'cloudformation:*'
+              - 'rds:*'
+              - 'sqs:*'
+              - 'ecs:*'
+            Resource: '*'
+            Effect: Allow
+          - Action:
+              - 'lambda:InvokeFunction'
+              - 'lambda:ListFunctions'
+            Resource: '*'
+            Effect: Allow
+          - Action:
+              - 'opsworks:CreateDeployment'
+              - 'opsworks:DescribeApps'
+              - 'opsworks:DescribeCommands'
+              - 'opsworks:DescribeDeployments'
+              - 'opsworks:DescribeInstances'
+              - 'opsworks:DescribeStacks'
+              - 'opsworks:UpdateApp'
+              - 'opsworks:UpdateStack'
+            Resource: '*'
+            Effect: Allow
+          - Action:
+              - 'cloudformation:CreateStack'
+              - 'cloudformation:DeleteStack'
+              - 'cloudformation:DescribeStacks'
+              - 'cloudformation:UpdateStack'
+              - 'cloudformation:CreateChangeSet'
+              - 'cloudformation:DeleteChangeSet'
+              - 'cloudformation:DescribeChangeSet'
+              - 'cloudformation:ExecuteChangeSet'
+              - 'cloudformation:SetStackPolicy'
+              - 'cloudformation:ValidateTemplate'
+            Resource: '*'
+            Effect: Allow
+          - Action:
+              - 'codebuild:BatchGetBuilds'
+              - 'codebuild:StartBuild'
+              - 'codebuild:BatchGetBuildBatches'
+              - 'codebuild:StartBuildBatch'
+            Resource: '*'
+            Effect: Allow
+          - Effect: Allow
+            Action:
+              - 'devicefarm:ListProjects'
+              - 'devicefarm:ListDevicePools'
+              - 'devicefarm:GetRun'
+              - 'devicefarm:GetUpload'
+              - 'devicefarm:CreateUpload'
+              - 'devicefarm:ScheduleRun'
+            Resource: '*'
+          - Effect: Allow
+            Action:
+              - 'servicecatalog:ListProvisioningArtifacts'
+              - 'servicecatalog:CreateProvisioningArtifact'
+              - 'servicecatalog:DescribeProvisioningArtifact'
+              - 'servicecatalog:DeleteProvisioningArtifact'
+              - 'servicecatalog:UpdateProduct'
+            Resource: '*'
+          - Effect: Allow
+            Action:
+              - 'cloudformation:ValidateTemplate'
+            Resource: '*'
+          - Effect: Allow
+            Action:
+              - 'ecr:DescribeImages'
+            Resource: '*'
+          - Effect: Allow
+            Action:
+              - 'states:DescribeExecution'
+              - 'states:DescribeStateMachine'
+              - 'states:StartExecution'
+            Resource: '*'
+          - Effect: Allow
+            Action:
+              - 'appconfig:StartDeployment'
+              - 'appconfig:StopDeployment'
+              - 'appconfig:GetDeployment'
+            Resource: '*'
+  IAMServiceRoleCodePipeline:
+    Type: AWS::IAM::Role
+    Properties:
+      Path: /
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+        - Action: sts:AssumeRole
+          Effect: Allow
+          Principal:
+            Service: codepipeline.amazonaws.com
+      ManagedPolicyArns:
+        - !Ref IAMPolicyCodePipelineServiceRoleMessageAgg
+  S3BucketCodePipelineSNSMessageAgg:
+    Type: 'AWS::S3::Bucket'
+    Properties:
+      AccessControl: Private
+      VersioningConfiguration: 
+        Status: Enabled
+      BucketName: !Join 
+        - '-'
+        - - !Ref 'AWS::AccountId'
+          - !Ref 'AWS::Region'
+          - snsagg
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+  S3BucketPolicyCodePipelineSNSMessageAgg:
+    Type: 'AWS::S3::BucketPolicy'
+    Properties:
+      Bucket: !Ref S3BucketCodePipelineSNSMessageAgg
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Sid: AllowGetObject
+            Effect: Allow
+            Principal: 
+              AWS: !Sub "arn:aws:iam::${AWS::AccountId}:role/${IAMServiceRoleCodePipeline}"
+            Action: 's3:*'
+            Resource:
+              - !Join 
+                - ''
+                - - 'arn:aws:s3:::'
+                  - !Ref S3BucketCodePipelineSNSMessageAgg
+              - !Join 
+                - ''
+                - - 'arn:aws:s3:::'
+                  - !Ref S3BucketCodePipelineSNSMessageAgg
+                  - /*
+          - Sid: DenyInsecureConnections
+            Effect: Deny
+            Principal: '*'
+            Action: s3:*
+            Resource: !Join [ '', [ !GetAtt S3BucketCodePipelineSNSMessageAgg.Arn, '/*' ] ]
+            Condition:
+              Bool:
+                aws:SecureTransport: false
+  CodePipelineSNSMessageAgg:
+    Type: AWS::CodePipeline::Pipeline
+    DependsOn: 
+      - IAMServiceRoleCodePipeline
+      - IAMServiceRoleCodePipelineCloudformation
+      - IAMServiceRoleStackSetAdmin
+    Properties: 
+      ArtifactStore: 
+          Location: !Ref S3BucketCodePipelineSNSMessageAgg
+          Type: S3
+      Name: SNSMessageAggregator
+      # RestartExecutionOnUpdate: Boolean
+      RoleArn: !Sub "arn:aws:iam::${AWS::AccountId}:role/${IAMServiceRoleCodePipeline}"
+      Stages: 
+        - Name: Source
+          Actions: 
+            - Name: SourceAction
+              ActionTypeId: 
+                Category: Source
+                Owner: AWS
+                Provider: S3
+                Version: 1
+              Configuration: 
+                S3Bucket: !Ref S3BucketCodePipelineSNSMessageAgg
+                S3ObjectKey: !Ref SourceArtifactFile
+                PollForSourceChanges: true
+              Namespace: SourceVariables
+              OutputArtifacts: 
+                - Name: SourceArtifact
+              RunOrder: 1
+        - 
+          Name: DeployMessageSender
+          Actions: 
+            - 
+              Name: DeployMessageSender
+              ActionTypeId: 
+                Category: Deploy
+                Owner: AWS
+                Provider: CloudFormation
+                Version: 1
+              Configuration: 
+                ActionMode: CREATE_UPDATE
+                StackName: messageaggregator-sender-stack
+                TemplatePath: "SourceArtifact::01-sns-aggregator-sender-stack.yml"
+                Capabilities: "CAPABILITY_IAM,CAPABILITY_NAMED_IAM"
+                RoleArn: !Sub "arn:aws:iam::${AWS::AccountId}:role/${IAMServiceRoleCodePipelineCloudformation}" 
+                OutputFileName: "snsagg-sender-output.json"
+              InputArtifacts: 
+                - 
+                  Name: "SourceArtifact"
+              OutputArtifacts:
+                - Name: MessageSenderArtifacts
+        - Name: DeployMessageReceiver
+          Actions: 
+            - Name: DeployMessageReceiver
+              ActionTypeId:
+                Category: Deploy
+                Owner: AWS
+                Provider: CloudFormation
+                Version: 1
+              Configuration:
+                ActionMode: CREATE_UPDATE
+                StackName: messageaggregator-receiver-stack
+                TemplatePath: "SourceArtifact::02-sns-aggregator-receiver-stack.yml"
+                RoleArn: !Sub "arn:aws:iam::${AWS::AccountId}:role/${IAMServiceRoleCodePipelineCloudformation}" 
+                ParameterOverrides: |
+                  {
+                    "SQSARN" : { "Fn::GetParam" : ["MessageSenderArtifacts", "snsagg-sender-output.json", "SQSQueueMessageAggregatorArn"]}
+                  }
+              InputArtifacts:
+                - 
+                  Name: "SourceArtifact"
+                - 
+                  Name: "MessageSenderArtifacts"
+        
+
+Outputs:
+  S3BucketCodePipelineSNSMessageAgg:
+    Description: S3 Bucket for SNS Message Aggregator CodePipeline Artifacts
+    Value: !Ref S3BucketCodePipelineSNSMessageAgg
+    Export:
+      Name: S3BucketCodePipelineSNSMessageAgg
+  IAMServiceRoleCodePipelineCloudformationName:
+    Description: IAM Service Role for CloudFormation execution
+    Value:  !Ref IAMServiceRoleCodePipelineCloudformation
+    Export:
+      Name: IAMServiceRoleCodePipelineCloudformationName
