@@ -18,6 +18,7 @@ Parameters:
 
 Conditions: 
   CreateStackSetRole: !Equals [!Ref MasterRoot, 'No']
+  DoNotCreateStackSetRole: !Equals [!Ref MasterRoot, 'Yes']
 
 Resources: 
   IAMServiceRoleCodePipelineCloudformation:
@@ -245,6 +246,7 @@ Resources:
                 aws:SecureTransport: false
   CodePipelineSNSMessageAgg:
     Type: AWS::CodePipeline::Pipeline
+    Condition: CreateStackSetRole
     DependsOn: 
       - IAMServiceRoleCodePipeline
       - IAMServiceRoleCodePipelineCloudformation
@@ -318,6 +320,80 @@ Resources:
                 - 
                   Name: "MessageSenderArtifacts"
         
+  CodePipelineSNSMessageAgg1:
+    Type: AWS::CodePipeline::Pipeline
+    Condition: DoNotCreateStackSetRole
+    DependsOn: 
+      - IAMServiceRoleCodePipeline
+      - IAMServiceRoleCodePipelineCloudformation
+    Properties: 
+      ArtifactStore: 
+          Location: !Ref S3BucketCodePipelineSNSMessageAgg
+          Type: S3
+      Name: SNSMessageAggregator
+      # RestartExecutionOnUpdate: Boolean
+      RoleArn: !Sub "arn:aws:iam::${AWS::AccountId}:role/${IAMServiceRoleCodePipeline}"
+      Stages: 
+        - Name: Source
+          Actions: 
+            - Name: SourceAction
+              ActionTypeId: 
+                Category: Source
+                Owner: AWS
+                Provider: S3
+                Version: 1
+              Configuration: 
+                S3Bucket: !Ref S3BucketCodePipelineSNSMessageAgg
+                S3ObjectKey: !Ref SourceArtifactFile
+                PollForSourceChanges: true
+              Namespace: SourceVariables
+              OutputArtifacts: 
+                - Name: SourceArtifact
+              RunOrder: 1
+        - 
+          Name: DeployMessageSender
+          Actions: 
+            - 
+              Name: DeployMessageSender
+              ActionTypeId: 
+                Category: Deploy
+                Owner: AWS
+                Provider: CloudFormation
+                Version: 1
+              Configuration: 
+                ActionMode: CREATE_UPDATE
+                StackName: messageaggregator-sender-stack
+                TemplatePath: "SourceArtifact::01-sns-aggregator-sender-stack.yml"
+                Capabilities: "CAPABILITY_IAM,CAPABILITY_NAMED_IAM"
+                RoleArn: !Sub "arn:aws:iam::${AWS::AccountId}:role/${IAMServiceRoleCodePipelineCloudformation}" 
+                OutputFileName: "snsagg-sender-output.json"
+              InputArtifacts: 
+                - 
+                  Name: "SourceArtifact"
+              OutputArtifacts:
+                - Name: MessageSenderArtifacts
+        - Name: DeployMessageReceiver
+          Actions: 
+            - Name: DeployMessageReceiver
+              ActionTypeId:
+                Category: Deploy
+                Owner: AWS
+                Provider: CloudFormation
+                Version: 1
+              Configuration:
+                ActionMode: CREATE_UPDATE
+                StackName: messageaggregator-receiver-stack
+                TemplatePath: "SourceArtifact::02-sns-aggregator-receiver-stack.yml"
+                RoleArn: !Sub "arn:aws:iam::${AWS::AccountId}:role/${IAMServiceRoleCodePipelineCloudformation}" 
+                ParameterOverrides: |
+                  {
+                    "SQSARN" : { "Fn::GetParam" : ["MessageSenderArtifacts", "snsagg-sender-output.json", "SQSQueueMessageAggregatorArn"]}
+                  }
+              InputArtifacts:
+                - 
+                  Name: "SourceArtifact"
+                - 
+                  Name: "MessageSenderArtifacts"
 
 Outputs:
   S3BucketCodePipelineSNSMessageAgg:
