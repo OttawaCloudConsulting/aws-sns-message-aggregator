@@ -211,4 +211,3 @@ As a best practice, we would recommend creating and managing your own deployment
 
 ## Future Enhancements
 
-+ Apply KMS CMK to Message Queue
